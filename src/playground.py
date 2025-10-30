@@ -1,14 +1,22 @@
-from pybaseball import statcast
-from pybaseball import cache
-from pybaseball import statcast_pitcher 
-from pybaseball import playerid_lookup
 import pandas as pd
+import pybaseball as ps
+from datetime import date, timedelta
+import random
+from typing import Tuple
 
-cache.enable()
+ps.cache.enable()
 
-#Just pull down a random pitch data from statcast
-def pull_single_random_pitch_data(): 
-    pass 
+def pull_single_random_pitch_data(year=2024) -> Tuple[str, pd.DataFrame]: 
+    #Given a date generate a random statcast range
+    format_str = "%Y-%m-%d"
+    range_days = (date(year, 10, 1) - date(year, 4, 16)).days
+    rand_offset = random.randint(0, max(0, range_days))
+    random_date = date(year, 4, 1) + timedelta(days=rand_offset)
+    statcast_date_str = random_date.strftime(format_str)
+
+    #Pick random game between April and October
+    statcast = ps.statcast(statcast_date_str) 
+    return (statcast_date_str, statcast.sample(n=1))
 
 #Pull down down season average for pitcher
 def pull_pitch_data_for_pitcher(player_id):
@@ -21,6 +29,10 @@ def pull_pitch_data_for_game(game_id):
 
 if __name__ == "__main__":
     # Test some common player searches
+
+    date, stat = pull_single_random_pitch_data()
+    print(f"Date: {date}")
+    exit()
     test_searches = [
         ("skubal", "tarik")
     ]
@@ -30,7 +42,7 @@ if __name__ == "__main__":
         print(f"SEARCHING FOR: {first.title()} {last.title()}")
         print(f"{'='*60}")
         
-        result = playerid_lookup(last, first, fuzzy=False)
+        result = ps.playerid_lookup(last, first, fuzzy=False)
         
         if len(result) > 0:
             print(f"\nFound {len(result)} match(es):")
@@ -49,7 +61,7 @@ if __name__ == "__main__":
                 print(f"\nFetching pitcher stats for {result['name_first'].iloc[0]} {result['name_last'].iloc[0]} (ID: {player_id})...")
                 
                 try:
-                    pitcher = statcast_pitcher("2024-03-31", "2024-08-01", player_id)
+                    pitcher = ps.statcast_pitcher("2024-03-31", "2024-08-01", player_id)
                     if not pitcher.empty:
                         print(f"Columns list: {pitcher.columns.to_list()}")
                         print(f"Info: {pitcher.info()}")
