@@ -2,85 +2,72 @@ import pandas as pd
 import pybaseball as ps
 from datetime import date, timedelta
 import random
-from typing import Tuple
+import logging 
+from typing import Tuple, Optional
 
 ps.cache.enable()
 
-def pull_single_random_pitch_data(year=2024) -> Tuple[str, pd.DataFrame]: 
-    #Given a date generate a random statcast range
-    format_str = "%Y-%m-%d"
-    range_days = (date(year, 10, 1) - date(year, 4, 16)).days
-    rand_offset = random.randint(0, max(0, range_days))
-    random_date = date(year, 4, 1) + timedelta(days=rand_offset)
-    statcast_date_str = random_date.strftime(format_str)
+# Configure root logger once at startup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s]: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
+# Get a module-level logger
+logger = logging.getLogger(__name__)
+
+
+def get_statcast_season_range(year: int) -> Tuple[date, date]:
+    """
+    Return a reasonable (April 1 – Oct 1) Statcast date range for a given season.
+    Ensures we don’t hit empty pre/postseason windows.
+    """
+    start = date(year, 4, 1)   # Opening month
+    end   = date(year, 10, 1)  # Before playoffs
+    return start, end
+
+
+def random_statcast_date(year: int) -> date:
+    """
+    Pick a random in-season date that likely has data.
+    """
+    start, end = get_statcast_season_range(year)
+    delta_days = (end - start).days
+    offset = random.randint(0, delta_days)
+    return start + timedelta(days=offset)
+
+def pull_single_random_pitch_data(year=2024) -> Tuple[str, pd.DataFrame]: 
+    format_str = "%Y-%m-%d"
+    random_date = random_statcast_date(year)
+    statcast_date_str = random_date.strftime(format_str)
     #Pick random game between April and October
     statcast = ps.statcast(statcast_date_str) 
     return (statcast_date_str, statcast.sample(n=1))
 
 #Pull down down season average for pitcher
-def pull_pitch_data_for_pitcher(player_id):
-    pass
+def pull_pitch_data_for_pitcher(last, first, year = 2024) -> Optional[pd.DataFrame]:
+    format_str = "%Y-%m-%d"
+    result = ps.playerid_lookup(last, first, fuzzy=False)
+    logger.info(f"\nFetching pitcher stats for {result['name_first'].iloc[0]} {result['name_last'].iloc[0]}...")
+    if len(result) <= 0: 
+        return None
+    logger.info(f"Result: {result}")
+    player_id = result["key_mlbam"].iloc[0]
+    start_date, end_date = get_statcast_season_range(2023)
+    logger.info(f"Start Date: {start_date.strftime(format_str)}, End Date: {end_date.strftime(format_str)}")
+    pitcher = ps.statcast_pitcher(start_date.strftime(format_str), end_date.strftime(format_str), player_id)
+    if not pitcher.empty:
+        return pitcher
+    return None
 
 #Pull down pitch data for a game
-# Dictionary of pitcher: [pitch_data] 
 def pull_pitch_data_for_game(game_id):
     pass 
 
 if __name__ == "__main__":
-    # Test some common player searches
-
-    date, stat = pull_single_random_pitch_data()
-    print(f"Date: {date}")
+    single_date, stat = pull_single_random_pitch_data()
+    logger.info(f"Date: {single_date}, Stat: {stat}")
+    pitcher = pull_pitch_data_for_pitcher("skubal", "tarik")
+    logger.info(f"Pitcher: {pitcher}")
     exit()
-    test_searches = [
-        ("skubal", "tarik")
-    ]
-    
-    for last, first in test_searches:
-        print(f"\n{'='*60}")
-        print(f"SEARCHING FOR: {first.title()} {last.title()}")
-        print(f"{'='*60}")
-        
-        result = ps.playerid_lookup(last, first, fuzzy=False)
-        
-        if len(result) > 0:
-            print(f"\nFound {len(result)} match(es):")
-            print("-" * 40)
-            
-            for idx, row in result.iterrows():
-                print(f"Player: {row['name_first']} {row['name_last']}")
-                print(f"MLB ID: {row['key_mlbam']}")
-                print(f"Position: {row.get('pos', 'N/A')}")
-                print(f"Team: {row.get('mlb_played_first', 'N/A')}")
-                print("-" * 40)
-            
-            # Get pitcher stats for the first match
-            if len(result) > 0:
-                player_id = result["key_mlbam"].iloc[0]
-                print(f"\nFetching pitcher stats for {result['name_first'].iloc[0]} {result['name_last'].iloc[0]} (ID: {player_id})...")
-                
-                try:
-                    pitcher = ps.statcast_pitcher("2024-03-31", "2024-08-01", player_id)
-                    if not pitcher.empty:
-                        print(f"Columns list: {pitcher.columns.to_list()}")
-                        print(f"Info: {pitcher.info()}")
-                        print(f"Describe: {pitcher.describe()}")
-                        
-                        # Display a full sample row
-                        print(f"\n{'='*80}")
-                        print("FULL SAMPLE ROW (First Row):")
-                        print(f"{'='*80}")
-                        sample_row = pitcher.iloc[0]
-                        for col, value in sample_row.items():
-                            print(f"{col:50}: {value}")
-                        print(f"{'='*80}")
-                    
-                    else:
-                        print("No pitcher data found for this date range")
-                except Exception as e:
-                    print(f"Error fetching pitcher data: {e}")
-        else:
-            print("No matches found")
-        
-        print(f"\n{'='*60}")
