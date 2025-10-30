@@ -43,7 +43,8 @@ def pull_single_random_pitch_data(year=2024) -> Tuple[str, pd.DataFrame]:
     statcast = ps.statcast(statcast_date_str) 
     return (statcast_date_str, statcast.sample(n=1))
 
-#Pull down down season average for pitcher
+#
+
 def pull_pitch_data_for_pitcher(last, first, year = 2024) -> Optional[pd.DataFrame]:
     format_str = "%Y-%m-%d"
     result = ps.playerid_lookup(last, first, fuzzy=False)
