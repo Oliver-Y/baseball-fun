@@ -13,10 +13,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s]: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
-
 # Get a module-level logger
 logger = logging.getLogger(__name__)
-
 
 def get_statcast_season_range(year: int) -> Tuple[date, date]:
     """
