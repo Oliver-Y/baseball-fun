@@ -77,8 +77,8 @@ def generate_trajectory_points(pitch_data: Optional[dict] = None,
 
     traj = Trajectory9P(r0=r0, v0=v0, a=a, include_gravity=include_gravity)
 
-    if t is None:
-        t = np.linspace(0.0, 0.6, 300)
+    if t is None:# TODO: remove hard coded sampling here? In fact, all I need to output is probably a trajectory and not all 3 points
+        t = np.linspace(0.0, 0.6, 300) 
     xyz = traj(t)
     x, y, z = xyz.T
 
@@ -95,9 +95,13 @@ def plot_trajectory(t: np.ndarray,
                     r0: np.ndarray,
                     predicted_plate_point: Tuple[float, float, float],
                     pitch_data: Optional[dict] = None,
-                    title_suffix: str = "3D Baseball Pitch Trajectory (Statcast 9P model)"):
+                    title_suffix: str = "3D Baseball Pitch Trajectory (Statcast 9P model)",
+                    save_path: Optional[str] = None):
     """
     Plot a precomputed trajectory. Pure visualization: no physics computed here.
+    
+    Args:
+        save_path: If provided, save the figure to this path instead of showing it
     """
     x_pred, y_pred, z_pred = predicted_plate_point
 
@@ -163,33 +167,48 @@ def plot_trajectory(t: np.ndarray,
     ax.view_init(elev=20, azim=-60)
 
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 def viz_trajectory(pitch_data: Optional[dict] = None,
-                   include_gravity: bool = False):
+                   include_gravity: bool = False,
+                   save_path: Optional[str] = None):
     """
     Backwards-compatible helper that generates then plots a trajectory.
+    
+    Args:
+        pitch_data: Statcast pitch data dictionary
+        include_gravity: Whether to include gravity in trajectory calculation
+        save_path: If provided, save the figure to this path
     """
     t, x, y, z, r0, pred_pt, _ = generate_trajectory_points(
         pitch_data=pitch_data,
         t=None,
         include_gravity=include_gravity,
     )
-    plot_trajectory(t, x, y, z, r0, pred_pt, pitch_data=pitch_data)
+    plot_trajectory(t, x, y, z, r0, pred_pt, pitch_data=pitch_data, save_path=save_path)
 
     #Answers: 'pfx_x', 'pfx_z', 'plate_x', 'plate_z'
 
 #TODO have an abstract data class that parses data into the relevant and right format
 
-# Get a module-level logger
-logger = logging.getLogger(__name__)
-
-test_date, stat = utils.pull_single_random_pitch_data()
-logger.info(f"Date: {test_date}, Stat: {stat}")
-# Take the A-z, a-y, a-x and plot it into the 9P form
-pitch_sample = stat.iloc[0]  # take first row as sample
-
-# Split: first generate, then plot
-t, x, y, z, r0, pred_pt, _ = generate_trajectory_points(pitch_sample.to_dict())
-plot_trajectory(t, x, y, z, r0, pred_pt, pitch_data=pitch_sample.to_dict())
+if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    # Pull random pitch data
+    test_date, stat = utils.pull_single_random_pitch_data()
+    logger.info(f"Date: {test_date}, Stat: {stat}")
+    
+    # Get first pitch sample
+    pitch_sample = stat.iloc[0]
+    pitch_dict = pitch_sample.to_dict()
+    
+    # Visualize the trajectory
+    viz_trajectory(pitch_data=pitch_dict)
