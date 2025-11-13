@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import logging
 import argparse
+from datetime import datetime
 from src.virtual_camera import VirtualCamera
 from rich.console import Console
 from rich.table import Table
@@ -11,20 +12,27 @@ from rich.table import Table
 logger = logging.getLogger(__name__)
 
 # Project 3D trajectory into 2D image plane
-def calculate_frames(traj: Trajectory9P, camera: VirtualCamera, num_frames: int = 30, end_time: float = 0.6):
+def calculate_2d_points(traj: Trajectory9P, camera: VirtualCamera, num_frames: int = 30, end_time: float = 0.6):
     t = np.linspace(0.0, end_time, num_frames) 
     point_3d = traj(t).astype(np.float64) #this is a (N,3) 
     projected_points, _ = cv2.projectPoints(point_3d, camera.extrinsics[:,:3], camera.extrinsics[:,3:4], camera.intrinsic_matric, None)
     return projected_points
 
-def visualize_projected_trajectory(projected_points, camera: VirtualCamera, trajectory_name: str = "Pitch"):
+def visualize_projected_trajectory(projected_points, camera: VirtualCamera, depths: np.ndarray, 
+                                   trajectory_name: str = "Pitch", ball_radius_ft: float = 0.12):
     """
-    Draw projected trajectory points on a blank image (static view).
+    Draw projected trajectory points on a blank image (static view) with perspective-correct sizing.
+    
+    Args:
+        projected_points: 2D projected points (N, 2) or (N, 1, 2)
+        camera: VirtualCamera object
+        depths: Depth values for each point (N,)
+        trajectory_name: Name to display
+        ball_radius_ft: Physical ball radius in feet
     """
     # Create a blank image
     img = np.zeros((camera.image_height, camera.image_width, 3), dtype=np.uint8)
     
-    # Reshape projected points from (N, 1, 2) to (N, 2)
     points_2d = projected_points.reshape(-1, 2)
     
     # Draw trajectory path
@@ -44,10 +52,14 @@ def visualize_projected_trajectory(projected_points, camera: VirtualCamera, traj
         if not (0 <= pt_int[0] < camera.image_width and 0 <= pt_int[1] < camera.image_height):
             continue
             
+        # Calculate perspective-correct radius
+        point_radius = int((ball_radius_ft * camera.focal_length) / depths[i])
+        point_radius = max(3, point_radius)  # Minimum 3 pixels for visibility
+        
         # Color gradient from red (start) to blue (end)
         ratio = i / n_points
         color = (int(255 * (1 - ratio)), 0, int(255 * ratio))
-        cv2.circle(img, pt_int, 5, color, -1)
+        cv2.circle(img, pt_int, point_radius, color, -1)
         
         # Label first and last points
         if i in labels:
@@ -62,10 +74,22 @@ def visualize_projected_trajectory(projected_points, camera: VirtualCamera, traj
 
 
 def generate_video_frames(projected_points, camera: VirtualCamera, 
+                          depths: np.ndarray,
                           trajectory_name: str = "Pitch",
-                          ball_radius: int = 8,
+                          ball_radius_ft: float = 0.12,  # Baseball radius in feet (~2.9" diameter)
                           trail_length: int = 5,
                           ):
+    """
+    Generate video frames with perspective-correct ball sizing.
+    
+    Args:
+        projected_points: 2D projected points (N, 2)
+        camera: VirtualCamera object
+        depths: Depth values for each point (N,)
+        trajectory_name: Name for display
+        ball_radius_ft: Physical ball radius in feet
+        trail_length: Number of trailing frames to show
+    """
     points_2d = projected_points.reshape(-1, 2)
     total_frames = len(points_2d)
     frames = []
@@ -74,24 +98,38 @@ def generate_video_frames(projected_points, camera: VirtualCamera,
         frame = np.zeros((camera.image_height, camera.image_width, 3), dtype=np.uint8)
         frame[:] = (20, 20, 20)
         
+        # Calculate perspective-correct ball radius in pixels
+        # projected_radius = (radius * focal_length) / depth
+        current_radius_raw = (ball_radius_ft * camera.focal_length) / depths[i]
+        current_radius = int(current_radius_raw)
+        current_radius = max(2, current_radius)  # Minimum 2 pixels
+        
+        # Debug: Print radius for every 10th frame
+        logger.info(f"Frame {i}: depth={depths[i]:.2f}ft, focal_length={camera.focal_length:.1f}px, "
+                    f"ball_radius={ball_radius_ft}ft, calculated_radius={current_radius_raw:.2f}px -> {current_radius}px")
+        
         trail_start = max(0, i - trail_length)
         for j in range(trail_start, i):
             pt = tuple(points_2d[j].astype(int))
             if 0 <= pt[0] < camera.image_width and 0 <= pt[1] < camera.image_height:
                 alpha = (j - trail_start) / max(1, trail_length)
                 color = (int(100 * alpha), int(100 * alpha), int(200 * alpha))
-                cv2.circle(frame, pt, max(2, ball_radius // 2), color, -1)
+                trail_radius = int((ball_radius_ft * camera.focal_length) / depths[j])
+                trail_radius = max(2, trail_radius // 2)
+                cv2.circle(frame, pt, trail_radius, color, -1)
         
         current_pt = tuple(points_2d[i].astype(int))
         if 0 <= current_pt[0] < camera.image_width and 0 <= current_pt[1] < camera.image_height:
-            cv2.circle(frame, current_pt, ball_radius + 2, (100, 100, 255), 2)  # Glow
-            cv2.circle(frame, current_pt, ball_radius, (255, 255, 255), -1)  # Ball
+            cv2.circle(frame, current_pt, current_radius + 2, (100, 100, 255), 2)  # Glow
+            cv2.circle(frame, current_pt, current_radius, (255, 255, 255), -1)  # Ball
         
         time_ms = int((i / total_frames) * 600)  # Assuming ~600ms pitch
         cv2.putText(frame, f"{trajectory_name}", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         cv2.putText(frame, f"Frame {i+1}/{total_frames} ({time_ms}ms)", (10, 60),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        cv2.putText(frame, f"Depth: {depths[i]:.1f}ft", (10, 90),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
         
         frames.append(frame)
     
@@ -136,17 +174,17 @@ if __name__ == "__main__":
     camera = VirtualCamera.from_mm_focal_length(
         focal_length_mm=2.74,      # Calculated from 70° FOV and 3.84mm sensor width
         sensor_width_mm=3.84,      # OV9281: 1280 pixels × 3.0μm
-        rvec=np.array([-np.pi/2, 0.0, 0.0]),  # Rotate -90° around X-axis to look toward mound
-        position=np.array([0.0, -20.0, 3.5]),     # 10 ft behind plate, 3.5 ft high (catcher POV)
+        rvec=np.array([np.pi/2, 0.0, 0.0]),  # Rotate +90° around X-axis to look toward mound
+        position=np.array([0.0, 0.0, 3.5]),     # 10 ft behind plate (negative Y), 3.5 ft high (catcher POV)
         image_width=1280,          # Native resolution
         image_height=800
     )
 
     end_time = traj.plate_intercept_time()
-    projected_points = calculate_frames(traj, camera, num_frames=60, end_time=end_time)
-    
-    # Check which points are in bounds
-    points_2d = projected_points.reshape(-1, 2)
+
+    #2D and depth points
+    points_2d = calculate_2d_points(traj, camera, num_frames=60, end_time=end_time).reshape(-1, 2)
+    depths = camera.calculate_depth(traj(np.linspace(0.0, end_time, 60)))
     
     # Print mapping between 3D trajectory points and 2D projected points
     console = Console()
@@ -161,7 +199,7 @@ if __name__ == "__main__":
     table.add_column("2D Y (px)", style="yellow", justify="right")
     table.add_column("In Bounds", justify="center")
     
-    for i in range(len(projected_points)):
+    for i in range(len(points_2d)):
         t_val = i / 60 * end_time
         x_3d, y_3d, z_3d = traj(t_val)
         x_2d, y_2d = points_2d[i]
@@ -190,10 +228,11 @@ if __name__ == "__main__":
     # Generate video frames
     logger.info("Generating video frames...")
     frames = generate_video_frames(
-        projected_points, 
-        camera, 
+        points_2d, 
+        camera,
+        depths,
         trajectory_name=f"{pitch_type} Pitch",
-        ball_radius=10,
+        ball_radius_ft=0.12,  # Baseball radius in feet
         trail_length=8
     )
     
@@ -211,7 +250,7 @@ if __name__ == "__main__":
     logger.info(f"✓ Saved 3D trajectory to {trajectory_3d_path}")
     
     # Also show the static camera view
-    static_img = visualize_projected_trajectory(projected_points, camera, trajectory_name=pitch_type)
+    static_img = visualize_projected_trajectory(points_2d, camera, depths, trajectory_name=pitch_type)
     static_view_path = f"{base_path}_{timestamp}_static_2d.png"
     cv2.imwrite(static_view_path, static_img)
     logger.info(f"✓ Saved static 2D camera view to {static_view_path}")
@@ -219,6 +258,7 @@ if __name__ == "__main__":
     # Preview the video simulation if requested
     if args.preview:
         cv2.imshow("Static Camera View (2D projection)", static_img)
+        viz_trajectory(pitch_data=pitch_dict, save_path = None)
         
         # Play the animation in a window with arrow key navigation
         logger.info("Playing animation... (w/s: navigate frames, 'q': quit)")

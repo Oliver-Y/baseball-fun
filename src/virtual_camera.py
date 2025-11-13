@@ -41,6 +41,51 @@ class VirtualCamera:
         """
         focal_length_pixels = focal_length_mm * (image_width / sensor_width_mm)
         return VirtualCamera(focal_length_pixels, rvec, position, image_width, image_height)
+
+    def world_to_camera(self, points_3d: np.ndarray):
+        """
+        Transform 3D world coordinates to camera coordinate system.
+        
+        Args:
+            points_3d: (N, 3) array or (3,) array of world coordinates
+            
+        Returns:
+            (N, 3) array or (3,) array of camera coordinates
+        """
+        # Handle single point vs multiple points
+        single_point = (points_3d.ndim == 1)
+        if single_point:
+            points_3d = points_3d.reshape(1, -1)
+        
+        # Build 4x4 transformation matrix
+        extrinsic_4x4 = np.vstack([self.extrinsics, [0, 0, 0, 1]])
+        
+        # Add homogeneous coordinate: (N, 3) -> (N, 4)
+        points_homogeneous = np.hstack([points_3d, np.ones((points_3d.shape[0], 1))])
+        
+        # Transform: (4, 4) @ (N, 4).T = (4, N) -> transpose to (N, 4)
+        points_camera = (extrinsic_4x4 @ points_homogeneous.T).T
+        
+        # Drop homogeneous coordinate and return
+        result = points_camera[:, :3]
+        return result[0] if single_point else result
+    
+    def calculate_depth(self, points_3d: np.ndarray):
+        """
+        Calculate depth (distance along optical axis) for 3D points.
+        
+        Args:
+            points_3d: (N, 3) array or (3,) array of world coordinates
+            
+        Returns:
+            (N,) array or float of depth values
+        """
+        camera_coords = self.world_to_camera(points_3d)
+        # Handle both single point and multiple points
+        # By convention, camera Z-axis is the viewing direction (depth)
+        if camera_coords.ndim == 1:
+            return camera_coords[2]
+        return camera_coords[:, 2]
     
     #Assumes no skew, principal point at image center
     def _construct_intrinsic_matrix(self, focal_length: float, width: int, height: int):

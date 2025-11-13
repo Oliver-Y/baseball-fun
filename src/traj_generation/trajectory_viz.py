@@ -67,9 +67,15 @@ def generate_trajectory_points(pitch_data: Optional[dict] = None,
     Generate trajectory points from Statcast-like pitch data using a 9-parameter model.
     Returns (t, x, y, z, r0, (x_pred, y_pred, z_pred), traj).
     """
+    # Handle missing data with reasonable defaults
+    release_extension = pitch_data.get('release_extension')
+    if release_extension is None:
+        release_extension = 6.0  # Default release extension in feet
+        logging.warning(f"Missing 'release_extension' in pitch data, using default: {release_extension} ft")
+    
     r0 = np.array([
         pitch_data['release_pos_x'],
-        60.5 - pitch_data['release_extension'],
+        60.5 - release_extension,
         pitch_data['release_pos_z']
     ])
     v0 = np.array([pitch_data['vx0'], pitch_data['vy0'], pitch_data['vz0']])
