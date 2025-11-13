@@ -3,7 +3,10 @@ from src import utils
 import numpy as np
 import cv2
 import logging
+import argparse
 from src.virtual_camera import VirtualCamera
+from rich.console import Console
+from rich.table import Table
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +108,12 @@ def save_as_gif(frames, output_path: str = "pitch_trajectory.gif", fps: int = 30
         duration=1000 // fps,  # Duration per frame in ms
         loop=0  # Infinite loop
     )
-    logger.info(f"Saved GIF to {output_path}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate and visualize baseball pitch trajectory from camera perspective")
+    parser.add_argument("--preview", action="store_true", help="Preview the video simulation interactively")
+    args = parser.parse_args()
+    
     logging.basicConfig(level=logging.INFO)
     
     test_date, stat = utils.pull_single_random_pitch_data()
@@ -143,29 +149,41 @@ if __name__ == "__main__":
     points_2d = projected_points.reshape(-1, 2)
     
     # Print mapping between 3D trajectory points and 2D projected points
-    logger.info("\n" + "="*80)
-    logger.info("3D TRAJECTORY POINT -> 2D PROJECTED POINT MAPPING")
-    logger.info("="*80)
-    logger.info(f"{'Frame':<6} {'Time(s)':<8} {'3D X (ft)':<12} {'3D Y (ft)':<12} {'3D Z (ft)':<12} {'2D X (px)':<12} {'2D Y (px)':<12} {'In Bounds':<10}")
-    logger.info("-"*80)
+    console = Console()
+    table = Table(title="3D TRAJECTORY POINT → 2D PROJECTED POINT MAPPING", show_header=True, header_style="bold magenta")
+    
+    table.add_column("Frame", style="cyan", justify="right")
+    table.add_column("Time(s)", style="cyan", justify="right")
+    table.add_column("3D X (ft)", style="green", justify="right")
+    table.add_column("3D Y (ft)", style="green", justify="right")
+    table.add_column("3D Z (ft)", style="green", justify="right")
+    table.add_column("2D X (px)", style="yellow", justify="right")
+    table.add_column("2D Y (px)", style="yellow", justify="right")
+    table.add_column("In Bounds", justify="center")
     
     for i in range(len(projected_points)):
-        t_val = i / 60
+        t_val = i / 60 * end_time
         x_3d, y_3d, z_3d = traj(t_val)
         x_2d, y_2d = points_2d[i]
-        in_bounds_flag = "Yes" if (0 <= x_2d < camera.image_width and 0 <= y_2d < camera.image_height) else "No"
-        logger.info(f"{i+1:<6} {t_val:<8.3f} {x_3d:<12.3f} {y_3d:<12.3f} {z_3d:<12.3f} {x_2d:<12.2f} {y_2d:<12.2f} {in_bounds_flag:<10}")
+        in_bounds = (0 <= x_2d < camera.image_width and 0 <= y_2d < camera.image_height)
+        in_bounds_str = "[green]✓[/green]" if in_bounds else "[red]✗[/red]"
+        
+        table.add_row(
+            str(i+1),
+            f"{t_val:.3f}",
+            f"{x_3d:.3f}",
+            f"{y_3d:.3f}",
+            f"{z_3d:.3f}",
+            f"{x_2d:.2f}",
+            f"{y_2d:.2f}",
+            in_bounds_str
+        )
     
-    logger.info("="*80)
+    console.print(table)
     
-    logger.info(f"First projected point (release): ({points_2d[0, 0]:.2f}, {points_2d[0, 1]:.2f})")
-    logger.info(f"Last projected point (plate): ({points_2d[-1, 0]:.2f}, {points_2d[-1, 1]:.2f})")
-    logger.info(f"Image center: ({camera.image_width/2:.2f}, {camera.image_height/2:.2f})")
     in_bounds = (points_2d[:, 0] >= 0) & (points_2d[:, 0] < camera.image_width) & \
                 (points_2d[:, 1] >= 0) & (points_2d[:, 1] < camera.image_height)
     logger.info(f"Points in bounds: {in_bounds.sum()}/{len(points_2d)}")
-    logger.info(f"X range (projected): {points_2d[:, 0].min():.2f} to {points_2d[:, 0].max():.2f}")
-    logger.info(f"Y range (projected): {points_2d[:, 1].min():.2f} to {points_2d[:, 1].max():.2f}")
     
     pitch_type = pitch_sample.get('pitch_type', 'Unknown')
     
@@ -180,41 +198,47 @@ if __name__ == "__main__":
     )
     
     # Save as GIF
-    gif_path = "data/pitch_trajectory.gif"
-    logger.info(f"Saving GIF with {len(frames)} frames...")
+    base_path = "data/pitch_trajectory" 
+    #Grab time to timestamp the file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    gif_path = f"{base_path}_{timestamp}.gif"
     save_as_gif(frames, gif_path, fps=30)
     logger.info(f"✓ Saved animated pitch to {gif_path}")
     
     # Save 3D trajectory visualization
-    trajectory_3d_path = "data/pitch_trajectory_3d.png"
-    logger.info(f"Saving 3D trajectory view...")
+    trajectory_3d_path = f"{base_path}_{timestamp}_3d.png"
     viz_trajectory(pitch_data=pitch_dict, save_path=trajectory_3d_path)
     logger.info(f"✓ Saved 3D trajectory to {trajectory_3d_path}")
     
     # Also show the static camera view
     static_img = visualize_projected_trajectory(projected_points, camera, trajectory_name=pitch_type)
-    static_view_path = "data/pitch_trajectory_static_2d.png"
+    static_view_path = f"{base_path}_{timestamp}_static_2d.png"
     cv2.imwrite(static_view_path, static_img)
     logger.info(f"✓ Saved static 2D camera view to {static_view_path}")
-    cv2.imshow("Static Camera View (2D projection)", static_img)
     
-    # Play the animation in a window with arrow key navigation
-    logger.info("Playing animation... (Up/Down arrows: navigate, 'q': quit)")
-    current_frame = 0
-    while True:
-        cv2.imshow("Pitch Video Simulation", frames[current_frame])
-        key = cv2.waitKey(0) & 0xFF  # Get the key code (mask to get lower 8 bits)
+    # Preview the video simulation if requested
+    if args.preview:
+        cv2.imshow("Static Camera View (2D projection)", static_img)
         
-        # Arrow keys: Up=82, Down=84 (on most systems)
-        # Also support 'w'/'s' as alternatives
-        if key == ord('w') or key == ord('W'):  # Up arrow or 'w'
-            current_frame = min(current_frame + 1, len(frames) - 1)
-        elif key == ord('s') or key == ord('S'):  # Down arrow or 's'
-            current_frame = max(current_frame - 1, 0)
-        elif key == ord('q') or key == ord('Q'):  # Quit
-            break
-    
-    cv2.destroyAllWindows()
+        # Play the animation in a window with arrow key navigation
+        logger.info("Playing animation... (w/s: navigate frames, 'q': quit)")
+        current_frame = 0
+        while True:
+            cv2.imshow("Pitch Video Simulation", frames[current_frame])
+            key = cv2.waitKey(0) & 0xFF  # Get the key code (mask to get lower 8 bits)
+            
+            # Arrow keys: Up=82, Down=84 (on most systems)
+            # Also support 'w'/'s' as alternatives
+            if key == ord('w'): 
+                current_frame = min(current_frame + 1, len(frames) - 1)
+            elif key == ord('s'): 
+                current_frame = max(current_frame - 1, 0)
+            elif key == ord('q'): 
+                break
+        
+        cv2.destroyAllWindows()
+    else:
+        logger.info("Skipping preview (use --preview flag to see interactive visualization)")
     
     logger.info("\n" + "="*60)
     logger.info("Output files generated:")
