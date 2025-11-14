@@ -8,6 +8,7 @@ from datetime import datetime
 from src.virtual_camera import VirtualCamera
 from rich.console import Console
 from rich.table import Table
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,6 @@ def generate_video_frames(projected_points, camera: VirtualCamera,
 
 
 def save_as_gif(frames, output_path: str = "pitch_trajectory.gif", fps: int = 30):
-    from PIL import Image
     pil_frames = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames]
     pil_frames[0].save(
         output_path,
