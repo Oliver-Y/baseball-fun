@@ -204,8 +204,6 @@ def viz_trajectory(pitch_data: Optional[dict] = None,
 #TODO have an abstract data class that parses data into the relevant and right format
 
 if __name__ == "__main__":
-    import logging
-    logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     
     # Pull random pitch data

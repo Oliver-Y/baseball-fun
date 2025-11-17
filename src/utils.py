@@ -7,13 +7,6 @@ from typing import Tuple, Optional
 
 ps.cache.enable()
 
-# Configure root logger once at startup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s]: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-# Get a module-level logger
 logger = logging.getLogger(__name__)
 
 def get_statcast_season_range(year: int) -> Tuple[date, date]:

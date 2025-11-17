@@ -152,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--preview", action="store_true", help="Preview the video simulation interactively")
     args = parser.parse_args()
     
-    logging.basicConfig(level=logging.INFO)
+    # Logging is configured in src/__init__.py
     
     test_date, stat = utils.pull_single_random_pitch_data()
     logger.info(f"Date: {test_date}, Stat: {stat}")
