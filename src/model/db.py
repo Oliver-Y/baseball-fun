@@ -61,9 +61,9 @@ def write_to_parquet(data: Union[SyntheticBaseballData, List[SyntheticBaseballDa
     if append and file_path.exists():
         existing_table = pq.read_table(file_path)
         combined_table = pa.concat_tables([existing_table, table])
-        pq.write_table(combined_table, file_path, schema=schema)
+        pq.write_table(combined_table, file_path)
     else:
-        pq.write_table(table, file_path, schema=schema)
+        pq.write_table(table, file_path)
 
 
 def read_from_parquet(path: str) -> List[SyntheticBaseballData]:
