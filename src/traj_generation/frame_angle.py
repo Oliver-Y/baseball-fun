@@ -74,57 +74,84 @@ def visualize_projected_trajectory(projected_points, camera: VirtualCamera, dept
     return img
 
 
+def calculate_ball_data(projected_points: np.ndarray, camera: VirtualCamera, 
+                        depths: np.ndarray, ball_radius_ft: float = 0.12):
+    """
+    Calculate ball pixel radii and bounds for each frame.
+    
+    Args:
+        projected_points: 2D projected points (N, 2) or (N, 1, 2)
+        camera: VirtualCamera object
+        depths: Depth values for each point (N,)
+        ball_radius_ft: Physical ball radius in feet
+        
+    Returns:
+        Tuple of (radii, in_bounds):
+            - radii: (N,) array of ball radii in pixels
+            - in_bounds: (N,) boolean array indicating if ball is within image
+    """
+    points_2d = projected_points.reshape(-1, 2)
+    
+    # Calculate perspective-correct radii: projected_radius = (radius * focal_length) / depth
+    radii_raw = (ball_radius_ft * camera.focal_length) / depths
+    radii = np.maximum(2, radii_raw.astype(int))  # Minimum 2 pixels
+    
+    # Check which points are in bounds
+    in_bounds = (
+        (points_2d[:, 0] >= 0) & (points_2d[:, 0] < camera.image_width) &
+        (points_2d[:, 1] >= 0) & (points_2d[:, 1] < camera.image_height)
+    )
+    
+    return radii, in_bounds
+
+
 def generate_video_frames(projected_points, camera: VirtualCamera, 
                           depths: np.ndarray,
                           trajectory_name: str = "Pitch",
-                          ball_radius_ft: float = 0.12,  # Baseball radius in feet (~2.9" diameter)
+                          ball_radius_ft: float = 0.12,
                           trail_length: int = 5,
+                          show_trail: bool = True,
                           ):
     """
     Generate video frames with perspective-correct ball sizing.
     
     Args:
-        projected_points: 2D projected points (N, 2)
+        projected_points: 2D projected points (N, 2) or (N, 1, 2)
         camera: VirtualCamera object
         depths: Depth values for each point (N,)
         trajectory_name: Name for display
         ball_radius_ft: Physical ball radius in feet
-        trail_length: Number of trailing frames to show
+        trail_length: Number of trailing frames to show (only if show_trail=True)
+        show_trail: Whether to show motion trail behind the ball
     """
+    radii, in_bounds = calculate_ball_data(projected_points, camera, depths, ball_radius_ft)
     points_2d = projected_points.reshape(-1, 2)
     total_frames = len(points_2d)
     frames = []
     
-    for i in range(len(points_2d)):
+    for i in range(total_frames):
         frame = np.zeros((camera.image_height, camera.image_width, 3), dtype=np.uint8)
-        frame[:] = (20, 20, 20)
+        frame[:] = (20, 20, 20)  # Dark gray background
         
-        # Calculate perspective-correct ball radius in pixels
-        # projected_radius = (radius * focal_length) / depth
-        current_radius_raw = (ball_radius_ft * camera.focal_length) / depths[i]
-        current_radius = int(current_radius_raw)
-        current_radius = max(2, current_radius)  # Minimum 2 pixels
+        # Draw trail if enabled
+        if show_trail:
+            trail_start = max(0, i - trail_length)
+            for j in range(trail_start, i):
+                if in_bounds[j]:
+                    pt = tuple(points_2d[j].astype(int))
+                    alpha = (j - trail_start) / max(1, trail_length)
+                    color = (int(100 * alpha), int(100 * alpha), int(200 * alpha))
+                    trail_radius = max(2, radii[j] // 2)
+                    cv2.circle(frame, pt, trail_radius, color, -1)
         
-        # Debug: Print radius for every 10th frame
-        logger.info(f"Frame {i}: depth={depths[i]:.2f}ft, focal_length={camera.focal_length:.1f}px, "
-                    f"ball_radius={ball_radius_ft}ft, calculated_radius={current_radius_raw:.2f}px -> {current_radius}px")
+        # Draw current ball
+        if in_bounds[i]:
+            current_pt = tuple(points_2d[i].astype(int))
+            cv2.circle(frame, current_pt, radii[i] + 2, (100, 100, 255), 2)  # Glow
+            cv2.circle(frame, current_pt, radii[i], (255, 255, 255), -1)  # Ball
         
-        trail_start = max(0, i - trail_length)
-        for j in range(trail_start, i):
-            pt = tuple(points_2d[j].astype(int))
-            if 0 <= pt[0] < camera.image_width and 0 <= pt[1] < camera.image_height:
-                alpha = (j - trail_start) / max(1, trail_length)
-                color = (int(100 * alpha), int(100 * alpha), int(200 * alpha))
-                trail_radius = int((ball_radius_ft * camera.focal_length) / depths[j])
-                trail_radius = max(2, trail_radius // 2)
-                cv2.circle(frame, pt, trail_radius, color, -1)
-        
-        current_pt = tuple(points_2d[i].astype(int))
-        if 0 <= current_pt[0] < camera.image_width and 0 <= current_pt[1] < camera.image_height:
-            cv2.circle(frame, current_pt, current_radius + 2, (100, 100, 255), 2)  # Glow
-            cv2.circle(frame, current_pt, current_radius, (255, 255, 255), -1)  # Ball
-        
-        time_ms = int((i / total_frames) * 600)  # Assuming ~600ms pitch
+        # Add info text
+        time_ms = int((i / total_frames) * 600)
         cv2.putText(frame, f"{trajectory_name}", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         cv2.putText(frame, f"Frame {i+1}/{total_frames} ({time_ms}ms)", (10, 60),
