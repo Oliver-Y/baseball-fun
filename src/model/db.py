@@ -1,7 +1,8 @@
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pandas as pd
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Literal
 from dataclasses import dataclass
 
 @dataclass
@@ -66,25 +67,57 @@ def write_to_parquet(data: Union[SyntheticBaseballData, List[SyntheticBaseballDa
         pq.write_table(table, file_path)
 
 
-def read_from_parquet(path: str) -> List[SyntheticBaseballData]:
+def read_from_parquet(path: str, format: Literal["dataframe", "table", "objects"] = "dataframe"):
     """
-    Read SyntheticBaseballData from a Parquet file.
+    Read data from a Parquet file in various formats.
     
     Args:
         path: Path to Parquet file
+        format: Output format:
+            - "dataframe": pandas DataFrame (fastest, most efficient for most operations)
+            - "table": PyArrow Table (most memory efficient, columnar operations)
+            - "objects": List of SyntheticBaseballData (slowest, but type-safe)
         
     Returns:
-        List of SyntheticBaseballData instances
+        Depending on format:
+        - "dataframe": pd.DataFrame
+        - "table": pa.Table
+        - "objects": List[SyntheticBaseballData]
     """
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"Parquet file not found: {path}")
     
-    # Read table from Parquet
-    table = pq.read_table(path)
+    if format == "dataframe":
+        # Fastest: Direct pandas read (uses PyArrow under the hood)
+        return pd.read_parquet(path, engine="pyarrow")
     
-    # Convert to list of dictionaries
-    records = table.to_pylist()
+    elif format == "table":
+        # Most memory efficient: Keep as PyArrow Table
+        return pq.read_table(path)
     
-    # Convert to SyntheticBaseballData instances
-    return [SyntheticBaseballData(**record) for record in records]
+    elif format == "objects":
+        # Slowest: Convert to Python objects (kept for backward compatibility)
+        table = pq.read_table(path)
+        records = table.to_pylist()
+        return [SyntheticBaseballData(**record) for record in records]
+    
+    else:
+        raise ValueError(f"Unknown format: {format}. Must be 'dataframe', 'table', or 'objects'")
+
+
+def read_from_parquet_iter(path: str, batch_size: int = 1000):
+    """
+    Read Parquet file in batches (memory-efficient for large files).
+    
+    Args:
+        path: Path to Parquet file
+        batch_size: Number of rows per batch
+        
+    Yields:
+        pd.DataFrame batches
+    """
+    parquet_file = pq.ParquetFile(path)
+    
+    for batch in parquet_file.iter_batches(batch_size=batch_size):
+        yield batch.to_pandas()
