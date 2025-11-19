@@ -22,10 +22,12 @@ import cv2
 #import numpy as np
 from PIL import Image
 import logging
-#from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split
+from typing import Dict, Tuple
+import pandas as pd
 #from ultralytics import YOLO
 
-from src.model.db import SyntheticBaseballData, read_from_parquet
+from src.model.db import read_from_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -81,28 +83,28 @@ def get_image_dimensions(image_path: str) -> Tuple[int, int]:
         raise
 
 
-def convert_to_yolo_format(data: SyntheticBaseballData, output_labels_dir: str) -> str:
+def convert_to_yolo_format(data: dict, output_labels_dir: str) -> str:
     """
-    Convert a single SyntheticBaseballData entry to YOLO format.
+    Convert a single annotation entry to YOLO format.
     
     Args:
-        data: SyntheticBaseballData instance
+        data: Dictionary with keys: image_path, bbox_x, bbox_y, bbox_width, bbox_height
         output_labels_dir: Directory to save label files
         
     Returns:
         Path to the created label file
     """
     # Get image dimensions
-    image_width, image_height = get_image_dimensions(data.image_path)
+    image_width, image_height = get_image_dimensions(data['image_path'])
     
     # Convert bbox to YOLO format
     center_x, center_y, norm_width, norm_height = coco_to_yolo(
-        data.bbox_x, data.bbox_y, data.bbox_width, data.bbox_height,
+        data['bbox_x'], data['bbox_y'], data['bbox_width'], data['bbox_height'],
         image_width, image_height
     )
     
     # Create label file path (same name as image but with .txt extension)
-    image_name = Path(data.image_path).stem
+    image_name = Path(data['image_path']).stem
     label_path = os.path.join(output_labels_dir, f"{image_name}.txt")
     
     # Write YOLO format annotation
@@ -111,6 +113,28 @@ def convert_to_yolo_format(data: SyntheticBaseballData, output_labels_dir: str) 
         f.write(f"{BASEBALL_CLASS_ID} {center_x:.6f} {center_y:.6f} {norm_width:.6f} {norm_height:.6f}\n")
     
     return label_path
+
+def create_yolo_directory_structure(output_dir: str) -> Dict[str, Tuple[Path, Path]]:
+    output_path = Path(output_dir)
+    images_train_dir = output_path / "images" / "train"
+    images_val_dir = output_path / "images" / "val"
+    labels_train_dir = output_path / "labels" / "train"
+    labels_val_dir = output_path / "labels" / "val"
+    images_test_dir = output_path / "images" / "test"
+    labels_test_dir = output_path / "labels" / "test"
+    
+    images_train_dir.mkdir(parents=True, exist_ok=True)
+    images_val_dir.mkdir(parents=True, exist_ok=True)
+    labels_train_dir.mkdir(parents=True, exist_ok=True)
+    labels_val_dir.mkdir(parents=True, exist_ok=True)
+    
+    images_test_dir.mkdir(parents=True, exist_ok=True)
+    labels_test_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "train": (images_train_dir, labels_train_dir),
+        "val": (images_val_dir, labels_val_dir),
+        "test": (images_test_dir, labels_test_dir),
+    }
 
 
 def create_yolo_dataset(parquet_path: str, output_dir: str, train_split: float = 0.8, 
@@ -133,78 +157,55 @@ def create_yolo_dataset(parquet_path: str, output_dir: str, train_split: float =
     df = read_from_parquet(parquet_path, format="dataframe")
     logger.info(f"Loaded {len(df)} annotations")
     
-    # Convert DataFrame rows to SyntheticBaseballData for processing
-    all_data = [SyntheticBaseballData(**row.to_dict()) for _, row in df.iterrows()]
-    
     # Create YOLO directory structure
-    #output_path = Path(output_dir)
-    #images_train_dir = output_path / "images" / "train"
-    #images_val_dir = output_path / "images" / "val"
-    #labels_train_dir = output_path / "labels" / "train"
-    #labels_val_dir = output_path / "labels" / "val"
-    
-    #images_test_dir = None
-    #labels_test_dir = None
-    #if test_split > 0:
-    #    images_test_dir = output_path / "images" / "test"
-    #    labels_test_dir = output_path / "labels" / "test"
-    #    images_test_dir.mkdir(parents=True, exist_ok=True)
-    #    labels_test_dir.mkdir(parents=True, exist_ok=True)
-    
-    #images_train_dir.mkdir(parents=True, exist_ok=True)
-    #images_val_dir.mkdir(parents=True, exist_ok=True)
-    #labels_train_dir.mkdir(parents=True, exist_ok=True)
-    #labels_val_dir.mkdir(parents=True, exist_ok=True)
+    directories = create_yolo_directory_structure(output_dir)
     
     ## Split data
-    #logger.info(f"Splitting data: train={train_split:.1%}, val={val_split:.1%}, test={test_split:.1%}")
+    logger.info(f"Splitting data: train={train_split:.1%}, val={val_split:.1%}, test={test_split:.1%}")
+    if test_split > 0:
+        train_val_data, test_data = train_test_split(df, test_size=test_split, random_state=42)
+        train_data, val_data = train_test_split(train_val_data, test_size=val_split/(train_split+val_split), random_state=42)
+    else:
+        train_data, val_data = train_test_split(df, test_size=val_split, random_state=42)
+        test_data = []
     
-    #if test_split > 0:
-    #    train_val_data, test_data = train_test_split(all_data, test_size=test_split, random_state=42)
-    #    train_data, val_data = train_test_split(train_val_data, test_size=val_split/(train_split+val_split), random_state=42)
-    #else:
-    #    train_data, val_data = train_test_split(all_data, test_size=val_split, random_state=42)
-    #    test_data = []
     
-    #logger.info(f"Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+    logger.info(f"Split sizes - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
     
-    ## Process each split
-    #splits = [
-    #    (train_data, images_train_dir, labels_train_dir, "train"),
-    #    (val_data, images_val_dir, labels_val_dir, "val"),
-    #]
-    #if test_split > 0:
-    #    splits.append((test_data, images_test_dir, labels_test_dir, "test"))
+    # Process each split, format is (data_list, directory_tuple, split_name)
+    splits = [
+        (train_data, directories["train"], "train"),
+        (val_data, directories["val"], "val"),
+    ]
+    if test_split > 0:
+        splits.append((test_data, directories["test"], "test"))
     
-    #for data_list, images_dir, labels_dir, split_name in splits:
-    #    logger.info(f"Processing {split_name} split...")
-    #    for idx, entry in enumerate(data_list):
-    #        try:
-    #            # Copy image to YOLO dataset
-    #            image_name = Path(entry.image_path).name
-    #            dest_image_path = images_dir / image_name
-    #            
-    #            # Copy image (or create symlink for efficiency)
-    #            if not dest_image_path.exists():
-    #                shutil.copy2(entry.image_path, dest_image_path)
-    #            
-    #            # Convert and save label
-    #            convert_to_yolo_format(entry, str(labels_dir))
-    #            
-    #            if (idx + 1) % 100 == 0:
-    #                logger.info(f"  Processed {idx + 1}/{len(data_list)} {split_name} samples")
-    #                
-    #        except Exception as e:
-    #            logger.error(f"Failed to process {split_name} entry {idx}: {e}", exc_info=True)
-    #            continue
-    #    
-    #    logger.info(f"✓ Completed {split_name} split: {len(data_list)} samples")
+    # TODO: Potentially vectorize but for now we can just go row by row
+    for data_list, dirs, split_name in splits:
+        images_dir, labels_dir = dirs
+        logger.info(f"Processing {split_name} split: {len(data_list)} samples")
+        
+        for idx, entry in enumerate(data_list.itertuples()):
+            dest_image_path = images_dir / Path(entry.image_path).name
+            
+            # Create symlink instead of copying (saves disk space)
+            if not dest_image_path.exists():
+                src_path = Path(entry.image_path).resolve()
+                os.symlink(src_path, dest_image_path)
+            
+            # Create YOLO label file
+            convert_to_yolo_format(entry._asdict(), str(labels_dir))
+            
+            if (idx + 1) % 100 == 0:
+                logger.info(f"  Processed {idx + 1}/{len(data_list)} {split_name} samples")
+        
+        logger.info(f"✓ Completed {split_name} split: {len(data_list)} samples")
     
-    ## Create dataset.yaml file for YOLO
-    #create_yolo_config(output_path, num_classes=1, class_names=["baseball"])
+    # Create dataset.yaml file for YOLO
+    output_path = Path(output_dir)
+    create_yolo_config(output_path, num_classes=1, class_names=["baseball"])
     
-    #logger.info(f"✓ YOLO dataset created at {output_dir}")
-
+    logger.info(f"✓ YOLO dataset created at {output_dir}")
 
 def create_yolo_config(dataset_dir: Path, num_classes: int = 1, class_names: List[str] = None):
     """
